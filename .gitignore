@@ -1,4 +1,4 @@
-llm_cache.json
+/llm_cache.json
 __pycache__/
 .ipynb_checkpoints/
 *.zip

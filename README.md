@@ -17,7 +17,19 @@ King Saud University, CSC 569: Selected Topics in Artificial Intelligence, Fall 
    Google AI Studio). Switch on notebook access.
 3. Runtime > Run all. The full run makes about 240 model calls and takes 25-30 minutes on the free tier (model: gemini-3.5-flash-lite, 500 free requests per day).
    Responses are cached, so an interrupted run resumes where it stopped.
-4. Download `project_outputs.zip` at the end and place its contents in `results/`.
+4. Results are committed to this repo automatically if a Colab secret named `GITHUB_TOKEN` is set (a fine-grained
+   token limited to this repo, with Contents: read and write). Otherwise download `project_outputs.zip` at the end.
+
+## Results and the answer cache
+
+| Path | Content |
+|---|---|
+| `results/latest/` | outputs of the most recent complete run (overwritten each run) |
+| `results/runs/<date_time>/` | archived copy of every complete run |
+| `results/llm_cache.json` | every model response so far, pushed after each stage |
+
+A new Colab session restores `results/llm_cache.json` first, so prompts that have not changed are answered from the
+cache and use no API quota. Only new or edited prompts are sent to the model.
 
 ## What the notebook does
 

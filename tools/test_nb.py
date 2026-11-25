@@ -59,7 +59,7 @@ for tag, body in cells:
         continue
     if tag == "setup_llm":
         cfg = body.split("key = None")[0]
-        exec(cfg, ns); ns["SECONDS_BETWEEN_CALLS"] = 0; ns["_raw_llm"] = StubModel(); continue
+        exec(cfg, ns); ns["SECONDS_BETWEEN_CALLS"] = 0; ns["REPO_RAW_BASE"] = ""; ns["SAVE_TO_GITHUB"] = False; ns["_raw_llm"] = StubModel(); continue
     if tag == "pdf":
         continue
     if tag == "setup_embed":
@@ -125,4 +125,24 @@ d_edit = df.copy(); d_edit.loc[d_edit.index[0], "human_override"] = " fail"; d_e
 o2 = ns["summarize"](pd.read_csv("rt2.csv"))[1]
 assert o2.loc["baseline", "adversarial_pass_rate_%"] < o1.loc["baseline", "adversarial_pass_rate_%"]
 print(o2.T)
+# ---- save_to_github with a fake GitHub API ----
+log = []
+class FakeResp:
+    def __init__(s, code, data): s.status_code, s._d, s.text = code, data, str(data)
+    def json(s): return s._d
+class FakeRequests:
+    fail_first_patch = True
+    @staticmethod
+    def request(method, url, headers=None, json=None, timeout=None):
+        path = url.split("/repos/o/r")[1]; log.append((method, path, json))
+        assert headers["Authorization"] == "Bearer " + "t" * 30
+        if method == "PATCH" and FakeRequests.fail_first_patch:
+            FakeRequests.fail_first_patch = False; return FakeResp(422, {"message": "not a fast forward"})
+        return FakeResp(200, {"object": {"sha": "HEAD"}, "tree": {"sha": "TREE"}, "sha": "NEW"})
+ns.update(SAVE_TO_GITHUB=True, GITHUB_REPO="o/r", requests=FakeRequests, _github_token=lambda: "t" * 30)
+assert ns["save_to_github"]({"summary.csv": "results/latest/summary.csv", "missing.csv": "x"}, "msg") is True
+assert [m for m, p_, j in log].count("PATCH") == 2 and sum(p_ == "/git/blobs" for m, p_, j in log) == 2
+tree_call = [j for m, p_, j in log if p_ == "/git/trees"][0]
+assert tree_call["base_tree"] == "TREE" and tree_call["tree"][0]["path"] == "results/latest/summary.csv"
+ns["_github_token"] = lambda: None; assert ns["save_to_github"]({"summary.csv": "a"}, "m") is False
 print("\nALL CHECKS PASSED | calls:", ns["CALLS"])

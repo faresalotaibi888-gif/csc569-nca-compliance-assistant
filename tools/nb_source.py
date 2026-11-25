@@ -18,6 +18,10 @@
 # because calls are spaced out to respect the per-minute limit. Every response is cached in
 # `llm_cache.json`, so if the run stops (rate limit, disconnect) just run all again and it resumes.
 #
+# **Nothing is lost between sessions:** if a Colab secret `GITHUB_TOKEN` is set, the cache is pushed to the repo
+# after each stage and all results are committed at the end (`results/latest/` and `results/runs/<date>/`).
+# A new session restores the cache from the repo first, so only new or changed prompts use quota.
+#
 # Only the two public NCA documents are sent to the model. Do not paste internal or classified material.
 
 # %% [install]
@@ -33,7 +37,10 @@ EMBED_MODEL = "BAAI/bge-small-en-v1.5"  # runs locally in Colab, no API quota
 TOP_K = 5                              # chunks retrieved per question
 SECONDS_BETWEEN_CALLS = 5              # 12 requests/minute, under the 15/minute free limit
 TEMPERATURE = None                     # None = model default. Set e.g. 0.2 for more repeatable runs.
-REPO_RAW_BASE = "https://raw.githubusercontent.com/faresalotaibi888-gif/csc569-nca-compliance-assistant/main/"
+GITHUB_REPO = "faresalotaibi888-gif/csc569-nca-compliance-assistant"
+REPO_RAW_BASE = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/"
+SAVE_TO_GITHUB = True                  # needs a Colab secret GITHUB_TOKEN (fine-grained token, Contents: read and write)
+RUN_ID = time.strftime("%Y-%m-%d_%H%M", time.gmtime())   # folder name for this run's results (UTC)
 ECC_URL = "https://cdn.nca.gov.sa/api/files/public/upload/86e09090-44e4-481f-bc28-355673607654_ECC--2024-EN.pdf"
 CCC_URL = "https://cdn.nca.gov.sa/api/files/public/upload/6d5408a3-d8e6-4e96-963b-2c7198e5b7c2_CCC-2-2024-EN-.pdf"
 CANARY = "INTERNAL-REF-7Q4X-CANARY"    # fake secret placed in system prompts to detect prompt leaking
@@ -110,8 +117,81 @@ else:
 
 # %% [core_llm]
 # ---------------- Cached, rate-limited LLM wrapper ----------------
+import requests
+
 CACHE_FILE = "llm_cache.json"
+if not os.path.exists(CACHE_FILE) and REPO_RAW_BASE:
+    # New Colab session: restore the answers saved by earlier runs, so unchanged calls cost no quota.
+    try:
+        _r = requests.get(REPO_RAW_BASE + "results/" + CACHE_FILE, timeout=30)
+        if _r.status_code == 200:
+            json.loads(_r.text)
+            open(CACHE_FILE, "w").write(_r.text)
+            print("Restored the answer cache from GitHub.")
+    except Exception as e:
+        print("No cache restored from GitHub:", type(e).__name__)
 _cache = json.load(open(CACHE_FILE)) if os.path.exists(CACHE_FILE) else {}
+print(f"Answer cache: {len(_cache)} saved model responses")
+
+
+def _github_token():
+    try:
+        from google.colab import userdata
+    except Exception:
+        return None
+    for name in ("GITHUB_TOKEN", "GH_TOKEN", "GITHUB_PAT"):
+        try:
+            tok = userdata.get(name)
+            if isinstance(tok, str) and len(tok.strip()) >= 20:
+                return tok.strip()
+        except Exception:
+            pass
+    return None
+
+
+def save_to_github(files, message):
+    """Commit local files to the repo in ONE commit. files = {local_path: path_in_repo}. Never stops the run."""
+    files = {l: r for l, r in files.items() if os.path.exists(l)}
+    if not (SAVE_TO_GITHUB and files):
+        return False
+    token = _github_token()
+    if not token:
+        print("  (not saved to GitHub: add a Colab secret named GITHUB_TOKEN and grant this notebook access)")
+        return False
+    api = f"https://api.github.com/repos/{GITHUB_REPO}"
+    h = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"}
+
+    def call(method, path, **body):
+        r = requests.request(method, api + path, headers=h, json=body or None, timeout=60)
+        if r.status_code >= 300:
+            raise RuntimeError(f"GitHub {method} {path} -> {r.status_code} {r.text[:160]}")
+        return r.json()
+
+    try:
+        for attempt in range(2):                      # retry once if the branch moved meanwhile
+            head = call("GET", "/git/ref/heads/main")["object"]["sha"]
+            base_tree = call("GET", f"/git/commits/{head}")["tree"]["sha"]
+            tree = [{"path": remote, "mode": "100644", "type": "blob",
+                     "sha": call("POST", "/git/blobs", encoding="base64",
+                                 content=base64.b64encode(open(local, "rb").read()).decode())["sha"]}
+                    for local, remote in files.items()]
+            new_tree = call("POST", "/git/trees", base_tree=base_tree, tree=tree)["sha"]
+            commit = call("POST", "/git/commits", message=message, tree=new_tree, parents=[head])["sha"]
+            try:
+                call("PATCH", "/git/refs/heads/main", sha=commit)
+                print(f"  saved to GitHub: {len(files)} file(s) | {message}")
+                return True
+            except RuntimeError:
+                if attempt:
+                    raise
+    except Exception as e:
+        print("  WARNING: could not save to GitHub:", str(e)[:200])
+    return False
+
+
+def checkpoint(stage):
+    """Push the answer cache after each expensive stage so an interrupted run loses nothing."""
+    save_to_github({CACHE_FILE: "results/" + CACHE_FILE}, f"Run {RUN_ID}: cache after {stage} ({len(_cache)} responses)")
 _last_call = [0.0]
 CALLS = {"api": 0, "cached": 0}
 
@@ -579,6 +659,7 @@ strategy_summary = strategy_df.groupby("strategy").agg(
     answers_with_ungrounded_ids=("ungrounded_ids", lambda s: (s != "").mean()),
     avg_words=("words", "mean"), avg_latency_s=("latency_s", "mean")).round(2)
 strategy_summary.to_csv("strategy_summary.csv")
+checkpoint("prompt strategy comparison")
 strategy_summary
 
 # %% [markdown]
@@ -709,6 +790,8 @@ def run_suite(system_name, answer_fn):
 
 # %% [core_baseline]
 baseline_rows = run_suite("baseline", lambda t: rag_answer(t["prompt"], P1_MINIMAL, poison=t["poison"]))
+pd.DataFrame(baseline_rows).to_csv("redteam_baseline_partial.csv", index=False)
+checkpoint("baseline red-team")
 
 # %% [markdown]
 # ## 9. Guardrail (value-alignment) layer
@@ -873,6 +956,7 @@ guarded_rows = run_suite("guarded", lambda t: guarded_answer(t["prompt"], poison
 
 results_df = pd.DataFrame(baseline_rows + guarded_rows)
 results_df.to_csv("redteam_results.csv", index=False)
+checkpoint("guarded red-team")
 
 # %% [core_summary]
 import matplotlib
@@ -938,17 +1022,25 @@ with open("prompts_used.md", "w") as f:
                        ("CLASSIFIER_SYSTEM (G3)", CLASSIFIER_SYSTEM), ("VERIFIER_SYSTEM (G8)", VERIFIER_SYSTEM),
                        ("JUDGE_SYSTEM (evaluation)", JUDGE_SYSTEM)]:
         f.write(f"## {name}\n\n```\n{text}\n```\n\n")
-json.dump({"model": MODEL, "embedding_model": EMBED_MODEL, "top_k": TOP_K, "temperature": TEMPERATURE,
+json.dump({"run_id": RUN_ID, "model": MODEL, "embedding_model": EMBED_MODEL, "top_k": TOP_K, "temperature": TEMPERATURE,
            "n_chunks": len(CHUNKS), "n_control_chunks": {d["short"]: sum(c["kind"] == "control" and c["framework"] == d["short"] for c in CHUNKS) for d in DOCS},
            "n_valid_ids": len(VALID_IDS), "api_calls": CALLS, "n_tests": len(TESTS)},
           open("run_config.json", "w"), indent=2)
 FILES = ["strategy_results.csv", "strategy_summary.csv", "redteam_results.csv", "summary_by_category.csv",
          "summary.csv", "before_after.png", "prompts_used.md", "run_config.json"]
 with zipfile.ZipFile("project_outputs.zip", "w") as z:
-    for fn in FILES:
+    for fn in FILES + [CACHE_FILE]:
         if os.path.exists(fn):
             z.write(fn)
 print("Model calls:", CALLS, "| wrote project_outputs.zip")
+# Save to the repo: results/latest/ (overwritten each run), results/runs/<RUN_ID>/ (history), and the answer cache.
+_to_push = {CACHE_FILE: "results/" + CACHE_FILE}
+for fn in FILES:
+    _to_push[fn] = f"results/latest/{fn}"
+_saved = save_to_github(_to_push, f"Run {RUN_ID}: results ({MODEL}, {CALLS['api']} new calls)")
+save_to_github({fn: f"results/runs/{RUN_ID}/{fn}" for fn in FILES}, f"Run {RUN_ID}: archive copy")
+if not _saved:
+    print("Results were NOT saved to GitHub. Download project_outputs.zip and llm_cache.json from the Files panel.")
 try:
     from google.colab import files
     files.download("project_outputs.zip")
