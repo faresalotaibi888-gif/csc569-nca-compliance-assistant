@@ -77,11 +77,35 @@ def _raw_llm(system, prompt):
     return r.text or "[NO TEXT RETURNED BY MODEL]"
 
 # %% [list_models]
-# Sanity check: confirm MODEL exists for your key. If the test call fails, pick another
-# Flash model from the printed list and change MODEL in the cell above.
+# Sanity check: confirm a model answers for your key. A 503 "high demand" or 429 error is temporary, so this
+# retries, and if MODEL stays unavailable it switches to the next free Flash model your key can use.
 names = [m.name.replace("models/", "") for m in client.models.list()]
 print("Flash models available:", [n for n in names if "flash" in n])
-print("Test call ->", _raw_llm("Reply with one word.", "Say OK"))
+FALLBACKS = ["gemini-3.6-flash", "gemini-flash-latest", "gemini-3-flash-preview", "gemini-2.5-flash"]
+
+
+def _try_model(model, attempts=3):
+    global MODEL
+    previous, MODEL = MODEL, model
+    for a in range(attempts):
+        try:
+            return _raw_llm("Reply with one word.", "Say OK")
+        except Exception as e:
+            print(f"  {model}: attempt {a + 1} failed ({str(e)[:90]})")
+            if not any(c in str(e) for c in ("503", "UNAVAILABLE", "429", "RESOURCE_EXHAUSTED", "500")):
+                break                      # not a temporary error (e.g. model not found): try the next model
+            time.sleep(20 * (a + 1))
+    MODEL = previous
+    return None
+
+
+for _cand in [MODEL] + [m for m in FALLBACKS if m in names and m != MODEL]:
+    _out = _try_model(_cand)
+    if _out:
+        print(f"Using MODEL = {MODEL} | test call -> {_out}")
+        break
+else:
+    raise RuntimeError("No Gemini model answered. Wait a few minutes and run this cell again.")
 
 # %% [core_llm]
 # ---------------- Cached, rate-limited LLM wrapper ----------------
