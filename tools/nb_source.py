@@ -38,14 +38,29 @@ ECC_URL = "https://cdn.nca.gov.sa/api/files/public/upload/86e09090-44e4-481f-bc2
 CCC_URL = "https://cdn.nca.gov.sa/api/files/public/upload/6d5408a3-d8e6-4e96-963b-2c7198e5b7c2_CCC-2-2024-EN-.pdf"
 CANARY = "INTERNAL-REF-7Q4X-CANARY"    # fake secret placed in system prompts to detect prompt leaking
 
+def _usable_key(k):
+    """Return a clean API key string, or None. Colab can hand back a non-string while secret access is pending."""
+    if isinstance(k, dict):
+        print("Note: Colab returned a", type(k).__name__, "with fields", list(k.keys()), "instead of the key text.")
+        k = next((v for v in k.values() if isinstance(v, str) and " " not in v.strip() and len(v.strip()) >= 20), None)
+    if isinstance(k, bytes):
+        k = k.decode()
+    k = k.strip().strip('"').strip("'") if isinstance(k, str) else None
+    return k if k and " " not in k and len(k) >= 20 else None
+
+
 key = None
 try:
     from google.colab import userdata
-    key = userdata.get("GEMINI_API_KEY")
-except Exception:
-    pass
+    key = _usable_key(userdata.get("GEMINI_API_KEY"))
+except Exception as e:
+    print("Could not read the Colab secret GEMINI_API_KEY:", type(e).__name__)
 if not key:
-    key = os.environ.get("GEMINI_API_KEY") or getpass("Paste your Gemini API key: ")
+    key = _usable_key(os.environ.get("GEMINI_API_KEY"))
+while not key:
+    key = _usable_key(getpass("Paste your Gemini API key (starts with AIza...): "))
+    if not key:
+        print("That does not look like an API key. Paste only the key text.")
 
 from google import genai
 from google.genai import types
