@@ -14,7 +14,7 @@
 #
 # **How to run:** Runtime > Run all. You will be asked for a free Gemini API key
 # (in Colab, the best place for it is the key icon in the left sidebar: add a secret named `GEMINI_API_KEY`).
-# The full run makes roughly 240 model calls and takes about 30-35 minutes on the free tier
+# The full run makes roughly 240 model calls (free daily limit for this model: 500) and takes about 25-30 minutes on the free tier
 # because calls are spaced out to respect the per-minute limit. Every response is cached in
 # `llm_cache.json`, so if the run stops (rate limit, disconnect) just run all again and it resumes.
 #
@@ -28,10 +28,10 @@ import os, re, json, time, hashlib, base64, zipfile
 from getpass import getpass
 
 # ---------------- Configuration ----------------
-MODEL = "gemini-3.8-flash"            # free-tier model; if unavailable, pick one printed by the next cell
+MODEL = "gemini-3.5-flash-lite"       # free tier: 15 requests/min, 500 requests/day (other Flash models: 20/day)
 EMBED_MODEL = "BAAI/bge-small-en-v1.5"  # runs locally in Colab, no API quota
 TOP_K = 5                              # chunks retrieved per question
-SECONDS_BETWEEN_CALLS = 7              # ~8 requests/minute, under the free per-minute limit
+SECONDS_BETWEEN_CALLS = 5              # 12 requests/minute, under the 15/minute free limit
 TEMPERATURE = None                     # None = model default. Set e.g. 0.2 for more repeatable runs.
 REPO_RAW_BASE = "https://raw.githubusercontent.com/faresalotaibi888-gif/csc569-nca-compliance-assistant/main/"
 ECC_URL = "https://cdn.nca.gov.sa/api/files/public/upload/86e09090-44e4-481f-bc28-355673607654_ECC--2024-EN.pdf"
@@ -78,10 +78,11 @@ def _raw_llm(system, prompt):
 
 # %% [list_models]
 # Sanity check: confirm a model answers for your key. A 503 "high demand" or 429 error is temporary, so this
-# retries, and if MODEL stays unavailable it switches to the next free Flash model your key can use.
+# retries, and if MODEL stays unavailable it switches to another Flash-Lite model your key can use.
 names = [m.name.replace("models/", "") for m in client.models.list()]
 print("Flash models available:", [n for n in names if "flash" in n])
-FALLBACKS = ["gemini-3.6-flash", "gemini-flash-latest", "gemini-3-flash-preview", "gemini-2.5-flash"]
+# Fall back only to other Flash-Lite text models: the full Flash models allow just 20 free requests per day.
+FALLBACKS = [n for n in names if "flash-lite" in n and not any(x in n for x in ("tts", "image", "live", "audio", "embed"))]
 
 
 def _try_model(model, attempts=3):

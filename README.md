@@ -15,7 +15,7 @@ King Saud University, CSC 569: Selected Topics in Artificial Intelligence, Fall 
 1. Click the Colab badge above.
 2. In Colab, open the key icon in the left sidebar and add a secret named `GEMINI_API_KEY` (free key from
    Google AI Studio). Switch on notebook access.
-3. Runtime > Run all. The full run makes about 240 model calls and takes 30-35 minutes on the free tier.
+3. Runtime > Run all. The full run makes about 240 model calls and takes 25-30 minutes on the free tier (model: gemini-3.5-flash-lite, 500 free requests per day).
    Responses are cached, so an interrupted run resumes where it stopped.
 4. Download `project_outputs.zip` at the end and place its contents in `results/`.
 
