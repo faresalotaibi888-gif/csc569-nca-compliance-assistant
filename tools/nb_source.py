@@ -135,14 +135,18 @@ def llm(system, prompt):
         except Exception as e:  # retry on rate limit / overload, raise anything else
             last_err = e
             msg = str(e)
+            if re.search(r"per\s*day|PerDay|daily", msg, re.I):   # daily quota: waiting will not help
+                raise RuntimeError(f"DAILY QUOTA REACHED for {MODEL} after {CALLS['api']} calls this session. "
+                                   f"Cached answers are kept. Full error: {msg[:600]}") from None
             if any(s in msg for s in ("429", "RESOURCE_EXHAUSTED", "503", "UNAVAILABLE", "500")):
                 pause = 30 * (attempt + 1)
-                print(f"  rate-limited or overloaded, waiting {pause}s ...")
+                kind = "rate limit (429)" if ("429" in msg or "RESOURCE_EXHAUSTED" in msg) else "server overloaded (503)"
+                print(f"  {kind}, waiting {pause}s ... {msg[:200] if attempt == 0 else ''}")
                 time.sleep(pause)
                 continue
             raise
-    raise RuntimeError(f"Model call failed after retries (daily quota may be exhausted; "
-                       f"re-run later, cached answers are kept): {last_err}")
+    raise RuntimeError(f"Model call failed after retries ({CALLS['api']} calls made this session; cached answers "
+                       f"are kept). Full error: {str(last_err)[:600]}")
 
 
 def parse_json(text, default):
