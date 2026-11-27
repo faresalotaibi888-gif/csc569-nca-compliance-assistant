@@ -1,0 +1,18 @@
+{
+  "run_id": "2026-11-27_1356",
+  "model": "gemini-3.5-flash-lite",
+  "embedding_model": "BAAI/bge-small-en-v1.5",
+  "top_k": 5,
+  "temperature": null,
+  "n_chunks": 302,
+  "n_control_chunks": {
+    "ECC": 108,
+    "CCC": 55
+  },
+  "n_valid_ids": 375,
+  "api_calls": {
+    "api": 0,
+    "cached": 194
+  },
+  "n_tests": 32
+}

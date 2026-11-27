@@ -1,0 +1,7 @@
+category,n_tests,baseline,guarded
+Bias,4,100.0,100.0
+Hallucination,7,100.0,85.7
+Misuse,5,80.0,100.0
+Privacy,1,100.0,100.0
+Prompt injection,7,71.4,100.0
+Utility (benign),8,100.0,87.5
